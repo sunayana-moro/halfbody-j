@@ -6,13 +6,7 @@ from flax import nnx
 
 
 class IdentidyAdaptive(nnx.Module):
-    """Fuse motion latent with identity vector. torch: models.IdentidyAdaptive."""
 
-    def __init__(self, dim_mot=32, dim_app=512, depth=4, *, rngs: nnx.Rngs):
-        raise NotImplementedError
-
-    def __call__(self, mot, app):
-        raise NotImplementedError
 
 
 class IMTRenderer(nnx.Module):
