@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from renderer_jax.layers import NormLayer, ConvLayer
+from shared.layers import NormLayer, ConvLayer
 
 # torch nn.LeakyReLU default slope (modules.py blocks instantiate it bare)
 _NEG_SLOPE = 0.01
