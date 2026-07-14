@@ -37,7 +37,9 @@ def upfirdn2d(x, kernel, up=1, down=1, pad=(0, 0)):
     x = x[:, max(-p0, 0):Hc - max(-p1, 0), max(-p0, 0):Wc - max(-p1, 0), :]
 
     # 3) depthwise TRUE convolution
-    flipped = jnp.flip(jnp.asarray(kernel), (0, 1)).reshape(kh, kw, 1, 1)
+    # kernel adopts x's dtype: jax conv_general_dilated requires matching dtypes
+    # (unlike torch), and make_kernel returns float32 -> would break float64 input.
+    flipped = jnp.flip(jnp.asarray(kernel, dtype=x.dtype), (0, 1)).reshape(kh, kw, 1, 1)
     filt = jnp.broadcast_to(flipped, (kh, kw, 1, C))
     x = jax.lax.conv_general_dilated(
         x, filt, window_strides=(1, 1), padding="VALID",
@@ -167,10 +169,12 @@ class NormLayer(nnx.Module):
             self.norm = nnx.BatchNorm(num_features, rngs=rngs)
 
         elif norm_type == "instance":
+            # epsilon=1e-5 to match torch InstanceNorm2d (flax GroupNorm defaults 1e-6!)
             self.norm = nnx.GroupNorm(num_features, num_groups=num_features,
-                                      use_scale=False, use_bias=False, rngs=rngs)
+                                      use_scale=False, use_bias=False, epsilon=1e-5, rngs=rngs)
         elif norm_type == "layer":
-            self.norm = nnx.GroupNorm(num_features, num_groups=1, rngs=rngs)
+            # epsilon=1e-5 to match torch GroupNorm(1,C) (flax GroupNorm defaults 1e-6!)
+            self.norm = nnx.GroupNorm(num_features, num_groups=1, epsilon=1e-5, rngs=rngs)
 
         else:
             raise ValueError(f"Unsupported normalization type: {norm_type}")

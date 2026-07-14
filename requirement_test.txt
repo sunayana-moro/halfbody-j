@@ -1,0 +1,22 @@
+# Env for the torch<->jax parity tests (test/shared/*.py).
+#
+#   uv venv test_env
+#   uv pip install --python test_env -r requirement_test.txt
+#   test_env/bin/python test/shared/main.py
+#
+# CPU is fine; the test blocks are tiny. Parity runs in float64 for a crisp signal.
+
+# core: the two frameworks being compared + numpy bridge
+torch
+jax==0.10.0
+flax==0.10.2
+numpy
+
+# needed only to *import* the frozen torch oracle modules (renderer/*), which
+# carry heavy module-level imports even for the tiny classes we test:
+#   renderer/modules.py       -> torchvision, matplotlib, pillow  (NormLayer's file)
+#   renderer/attention_modules.py -> timm                          (to_2tuple / trunc_normal_)
+torchvision
+matplotlib
+pillow
+timm
