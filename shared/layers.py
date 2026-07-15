@@ -37,7 +37,6 @@ def upfirdn2d(x, kernel, up=1, down=1, pad=(0, 0)):
     x = x[:, max(-p0, 0):Hc - max(-p1, 0), max(-p0, 0):Wc - max(-p1, 0), :]
 
     # 3) depthwise TRUE convolution
-    # kernel adopts x's dtype: jax conv_general_dilated requires matching dtypes
     # (unlike torch), and make_kernel returns float32 -> would break float64 input.
     flipped = jnp.flip(jnp.asarray(kernel, dtype=x.dtype), (0, 1)).reshape(kh, kw, 1, 1)
     filt = jnp.broadcast_to(flipped, (kh, kw, 1, C))

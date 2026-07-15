@@ -6,7 +6,7 @@ import importlib.util
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SUITES = ("layers", "attention", "stylegan")
+SUITES = ("layers", "resblock", "attention", "stylegan")
 
 
 # -------------------------------------------------------------------------------
