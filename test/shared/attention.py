@@ -1,18 +1,5 @@
-"""Tests for shared/attention.py — pure-jax smoke test AND a real torch parity test.
-
-- smoke()  : builds each jax attention block on random input, asserts shapes +
-             invariants (softmax rows sum to 1, window round-trip). No torch.
-- parity() : real torch vs jax, float64, ported weights, transparent per-case
-             report. Covers the CORE primitives that carry parameters/logic:
-               StandardUnifiedAttention  (the multi-head attention every block uses)
-               window_partition / window_reverse  (pure reshape, vs torch)
-             The composite blocks (Transformer/Swin/Self/Cross) are SMOKE-tested
-             above — they compose the parity-verified StandardUnifiedAttention +
-             stock flax LayerNorm/Linear + the verified window ops. Full composite
-             weight-porting is a follow-up if wanted.
-
-Run (parity needs torch):
-    test_env/bin/python test/shared/attention.py
+"""
+Test for ../shared/attention.py
 """
 
 import os
@@ -35,10 +22,17 @@ from shared.attention import (
 ATOL = 1e-9
 
 
-# ======================================================================== smoke
+# -------------------------------------------------------------------------------
+# Smoke Test Utilities
+# -------------------------------------------------------------------------------
+
 def _randn(shape, seed):
     return jax.random.normal(nnx.Rngs(seed).params(), shape)
 
+
+# -------------------------------------------------------------------------------
+# Smoke Test
+# -------------------------------------------------------------------------------
 
 def smoke():
     print("-- smoke (pure jax: shapes + invariants) " + "-" * 42)
@@ -74,9 +68,12 @@ def smoke():
     print("  smoke: all OK\n")
 
 
-# ======================================================================= parity
-import torch                                                     # noqa: E402
-from renderer.attention_modules import (                         # noqa: E402
+# -------------------------------------------------------------------------------
+# Parity Test Imports & Utilities
+# -------------------------------------------------------------------------------
+
+import torch                                                         # noqa: E402
+from renderer.attention_modules import (                             # noqa: E402
     StandardUnifiedAttention as TStd,
     window_partition as t_wp, window_reverse as t_wr,
 )
@@ -115,6 +112,10 @@ def report(idx, title, desc, in_desc, maps, yt, yj):
     return ok, mx
 
 
+# -------------------------------------------------------------------------------
+# Parity Tests
+# -------------------------------------------------------------------------------
+
 def parity():
     print("=" * 84)
     print(" torch <-> jax parity : shared/attention.py (core primitives)")
@@ -126,7 +127,9 @@ def parity():
     R = []
     B, N, C, heads = 2, 16, 32, 4
 
-    # 1. StandardUnifiedAttention: output x -------------------------------------
+    # -------------------------------------------------------------------------------
+    # StandardUnifiedAttention: output x
+    # -------------------------------------------------------------------------------
     t = TStd(C, heads).double().eval()
     j = StandardUnifiedAttention(C, heads, rngs=nnx.Rngs(0))
     maps = []
@@ -143,21 +146,27 @@ def parity():
                     "multi-head attention q,k,v -> projected output",
                     f"q,k,v {_fmt((B, N, C))} seeds 0/1/2", maps, to_np(xt), to_np(xj)))
 
-    # 2. same call, the attention map -------------------------------------------
+    # -------------------------------------------------------------------------------
+    # StandardUnifiedAttention: attn_map
+    # -------------------------------------------------------------------------------
     R.append(report(2, "StandardUnifiedAttention (attn_map)",
                     "softmax(q k^T / sqrt(d)) attention weights",
                     f"q,k,v {_fmt((B, N, C))} seeds 0/1/2",
                     ["(same ported projections as [1])"], to_np(at), to_np(aj)))
 
-    # 3. window_partition (parameter-free) --------------------------------------
-    x = rnd((2, 8, 8, 4), 3)                                  # (B,H,W,C) — same layout both sides
+    # -------------------------------------------------------------------------------
+    # window_partition (parameter-free)
+    # -------------------------------------------------------------------------------
+    x = rnd((2, 8, 8, 4), 3)                                 # (B,H,W,C) — same layout both sides
     with torch.no_grad():
         wt = to_np(t_wp(torch.from_numpy(x), 4))
     wj = to_np(window_partition(jnp.asarray(x), 4))
     R.append(report(3, "window_partition", "(B,H,W,C) -> (nW*B, ws*ws, C)",
                     "x (2, 8, 8, 4) seed 3", [], wt, wj))
 
-    # 4. window_reverse (parameter-free) ----------------------------------------
+    # -------------------------------------------------------------------------------
+    # window_reverse (parameter-free)
+    # -------------------------------------------------------------------------------
     with torch.no_grad():
         rt = to_np(t_wr(torch.from_numpy(wt), 4, 8, 8))
     rj = to_np(window_reverse(jnp.asarray(wj), 4, 8, 8))
@@ -172,6 +181,10 @@ def parity():
     print("=" * 84)
     return n_pass == len(R)
 
+
+# -------------------------------------------------------------------------------
+# Main Execution
+# -------------------------------------------------------------------------------
 
 def main():
     smoke()

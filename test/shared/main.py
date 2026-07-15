@@ -1,15 +1,5 @@
-"""Run every shared/ test suite in one shot.
-
-    test_env/bin/python test/shared/main.py
-
-Loads the sibling test files (layers.py, attention.py, stylegan.py) by path and
-calls each one's main() — each runs its smoke() + parity(). Prints a per-suite
-banner and a final aggregate. Exit 0 iff all suites pass.
-
-Loading by path (not `import`) avoids name-shadowing the real torch/jax modules,
-and loading with a non-"__main__" module name means each file's
-`if __name__ == "__main__"` guard does NOT auto-run — we call mod.main() ourselves.
-Do NOT import jax here: let the first loaded suite enable x64 before any array.
+"""
+Main file to run other test files in ../test/shared
 """
 
 import importlib.util
@@ -19,6 +9,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SUITES = ("layers", "attention", "stylegan")
 
 
+# -------------------------------------------------------------------------------
+# Module Loading
+# -------------------------------------------------------------------------------
+
 def load(name):
     path = os.path.join(HERE, name + ".py")
     spec = importlib.util.spec_from_file_location(f"suite_{name}", path)
@@ -26,6 +20,10 @@ def load(name):
     spec.loader.exec_module(mod)
     return mod
 
+
+# -------------------------------------------------------------------------------
+# Main Execution
+# -------------------------------------------------------------------------------
 
 def main():
     results = {}

@@ -1,19 +1,5 @@
-"""Real torch <-> jax parity test for shared/stylegan.py — verbose report.
-
-Builds the torch block (renderer.lia_resblocks) and our jax block
-(shared.stylegan), PORTS torch's weights into the jax module (NOT independent
-random init — that would give different weights and a false fail), runs both on
-the SAME seeded input, and prints a full per-case report: input, ported weights,
-both outputs, the numeric difference, the pass condition, and the verdict.
-
-Runs in **float64** on both sides: correct code then matches ~1e-15, so a real
-bug (~1e-2) is unmistakable. (float32 would blur ~1e-6 numerical noise into the
-signal.)
-
-Setup:
-    uv venv test_env
-    uv pip install --python test_env -r requirement_test.txt
-    test_env/bin/python test/shared/stylegan.py
+"""
+Test for ../shared/stylegan.py
 """
 
 import os
@@ -37,6 +23,10 @@ SEED_X = 0
 SEED_STYLE = 1
 
 
+# -------------------------------------------------------------------------------
+# Utilities
+# -------------------------------------------------------------------------------
+
 def to_np(x):
     if isinstance(x, torch.Tensor):
         return x.detach().cpu().numpy()
@@ -51,7 +41,10 @@ def _fmt(shape):
     return "(" + ", ".join(str(d) for d in shape) + ")"
 
 
-# ---- weight porting (torch -> jax); returns a list of human-readable mappings ----
+# -------------------------------------------------------------------------------
+# Weight Porting (Torch -> JAX)
+# -------------------------------------------------------------------------------
+
 def port_mod(t, j):
     w = to_np(t.weight)                                           # (1, out, in, k, k)
     j.weight.value = jnp.asarray(w[0].transpose(2, 3, 1, 0))      # (k, k, in, out)
@@ -74,6 +67,10 @@ def port_styled(t, j):
     maps.append(f"activate.bias torch {_fmt(b.shape)}  -> jax {_fmt(j.activate.bias.value.shape)}   [NCHW->NHWC channel]")
     return maps
 
+
+# -------------------------------------------------------------------------------
+# Test Runner
+# -------------------------------------------------------------------------------
 
 def run_case(idx, title, desc, tmod, jmod, x_nchw, style, styled):
     tmod = tmod.double().eval()
@@ -106,6 +103,10 @@ def run_case(idx, title, desc, tmod, jmod, x_nchw, style, styled):
     return ok, mx
 
 
+# -------------------------------------------------------------------------------
+# Main Execution
+# -------------------------------------------------------------------------------
+
 def main():
     B, Cin, Cout, k, S, H, W = 2, 3, 4, 3, 8, 8, 8
     x = rand((B, Cin, H, W), SEED_X)
@@ -125,6 +126,10 @@ def main():
 
     results = []
     idx = 1
+    
+    # -------------------------------------------------------------------------------
+    # ModulatedConv2d Tests
+    # -------------------------------------------------------------------------------
     for demod in (True, False):
         for mode in ("plain", "upsample", "downsample"):
             up, down = (mode == "upsample"), (mode == "downsample")
@@ -139,6 +144,9 @@ def main():
                                     t, j, x, style, styled=False))
             idx += 1
 
+    # -------------------------------------------------------------------------------
+    # StyledConv Tests
+    # -------------------------------------------------------------------------------
     for mode in ("plain", "upsample"):                   # torch StyledConv has no downsample
         up = (mode == "upsample")
         desc = f"ModulatedConv2d({mode}) -> NoiseInjection(noise=None, passthrough) -> FusedLeakyReLU"

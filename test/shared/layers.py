@@ -1,14 +1,5 @@
-"""Tests for shared/layers.py — a pure-jax smoke test AND a real torch parity test.
-
-- smoke()  : builds each jax block on random NHWC input, asserts shapes + a few
-             invariants (no torch needed). The "matrixmul"/sanity test.
-- parity() : builds the torch block (renderer.lia_resblocks / renderer.modules),
-             PORTS its weights into our jax block, runs both on the SAME seeded
-             input in float64, and prints a transparent per-case report
-             (input, ported weights, both outputs, max|Δ|, condition, verdict).
-
-Run (parity needs torch):
-    test_env/bin/python test/shared/layers.py
+"""
+Test for ../shared/layers.py
 """
 
 import os
@@ -31,10 +22,17 @@ from shared.layers import (
 ATOL = 1e-9
 
 
-# ======================================================================== smoke
+# -------------------------------------------------------------------------------
+# Smoke Test Utilities
+# -------------------------------------------------------------------------------
+
 def _randn(shape, seed):
     return jax.random.normal(nnx.Rngs(seed).params(), shape)
 
+
+# -------------------------------------------------------------------------------
+# Smoke Test
+# -------------------------------------------------------------------------------
 
 def smoke():
     print("-- smoke (pure jax: shapes + invariants) " + "-" * 42)
@@ -69,7 +67,10 @@ def smoke():
     print("  smoke: all OK\n")
 
 
-# ======================================================================= parity
+# -------------------------------------------------------------------------------
+# Parity Test Imports & Utilities
+# -------------------------------------------------------------------------------
+
 import torch                                                     # noqa: E402
 from renderer.lia_resblocks import (                             # noqa: E402
     EqualLinear as TEqualLinear, EqualConv2d as TEqualConv2d,
@@ -116,6 +117,10 @@ def report(idx, title, desc, in_desc, maps, yt, yj):
     return ok, mx
 
 
+# -------------------------------------------------------------------------------
+# Parity Tests
+# -------------------------------------------------------------------------------
+
 def parity():
     print("=" * 84)
     print(" torch <-> jax parity : shared/layers.py")
@@ -126,7 +131,9 @@ def parity():
 
     R = []
 
-    # 1. EqualLinear (plain) -----------------------------------------------------
+    # -------------------------------------------------------------------------------
+    # EqualLinear (plain)
+    # -------------------------------------------------------------------------------
     t = TEqualLinear(16, 32).double().eval()
     j = EqualLinear(16, 32, rngs=nnx.Rngs(0))
     j.weight.value = jnp.asarray(to_np(t.weight).T)          # (out,in)->(in,out)
@@ -140,7 +147,9 @@ def parity():
                     [f"weight torch {_fmt(to_np(t.weight).shape)} -> jax {_fmt(j.weight.value.shape)}  [.T]",
                      f"bias   torch {_fmt(to_np(t.bias).shape)} -> jax {_fmt(j.bias.value.shape)}"], yt, yj))
 
-    # 2. EqualLinear (fused-lrelu activation) -----------------------------------
+    # -------------------------------------------------------------------------------
+    # EqualLinear (fused-lrelu activation)
+    # -------------------------------------------------------------------------------
     t = TEqualLinear(16, 32, activation="fused_lrelu").double().eval()
     j = EqualLinear(16, 32, activation="fused_lrelu", rngs=nnx.Rngs(0))
     j.weight.value = jnp.asarray(to_np(t.weight).T)
@@ -152,7 +161,9 @@ def parity():
                     "x (4, 16)  seed 0",
                     ["weight .T, bias (as above)"], yt, yj))
 
-    # 3. EqualConv2d ------------------------------------------------------------
+    # -------------------------------------------------------------------------------
+    # EqualConv2d
+    # -------------------------------------------------------------------------------
     t = TEqualConv2d(8, 16, 3, padding=1).double().eval()
     j = EqualConv2d(8, 16, 3, padding=1, rngs=nnx.Rngs(0))
     j.weight.value = jnp.asarray(to_np(t.weight).transpose(2, 3, 1, 0))   # OIHW->HWIO
@@ -166,7 +177,9 @@ def parity():
                     [f"weight torch {_fmt(to_np(t.weight).shape)} -> jax {_fmt(j.weight.value.shape)}  [OIHW->HWIO]",
                      f"bias   torch {_fmt(to_np(t.bias).shape)} -> jax {_fmt(j.bias.value.shape)}"], yt, yj))
 
-    # 4. FusedLeakyReLU ---------------------------------------------------------
+    # -------------------------------------------------------------------------------
+    # FusedLeakyReLU
+    # -------------------------------------------------------------------------------
     t = TFusedLeakyReLU(8).double().eval()
     with torch.no_grad():
         t.bias.add_(torch.randn_like(t.bias))                 # non-zero bias so it matters
@@ -180,7 +193,9 @@ def parity():
                     "x (2, 8, 8, 8) NCHW  seed 2",
                     [f"bias torch (1,8,1,1) -> jax (1,1,1,8)"], yt, yj))
 
-    # 5. Blur (parameter-free) --------------------------------------------------
+    # -------------------------------------------------------------------------------
+    # Blur (parameter-free)
+    # -------------------------------------------------------------------------------
     t = TBlur([1, 3, 3, 1], pad=(1, 1)).double().eval()
     j = Blur([1, 3, 3, 1], pad=(1, 1))
     x = rnd((2, 4, 8, 8), 3)
@@ -190,7 +205,9 @@ def parity():
     R.append(report(5, "Blur", "FIR blur (upfirdn2d), pad=(1,1)",
                     "x (2, 4, 8, 8) NCHW  seed 3", [], yt, yj))
 
-    # 6. NoiseInjection (add path) ----------------------------------------------
+    # -------------------------------------------------------------------------------
+    # NoiseInjection (add path)
+    # -------------------------------------------------------------------------------
     t = TNoiseInjection().double().eval()
     with torch.no_grad():
         t.weight.add_(0.7)                                    # non-zero so noise matters
@@ -206,7 +223,9 @@ def parity():
                     "img (2,4,8,8) seed 4 | noise (2,1,8,8) seed 5",
                     [f"weight torch (1,) -> jax (1,)  (set 0.7)"], yt, yj))
 
-    # 7-9. NormLayer batch / instance / layer -----------------------------------
+    # -------------------------------------------------------------------------------
+    # NormLayer batch / instance / layer
+    # -------------------------------------------------------------------------------
     for i, nt in enumerate(("batch", "instance", "layer"), start=7):
         t = TNormLayer(4, nt).double().eval()
         maps = []
@@ -242,7 +261,9 @@ def parity():
                          "layer": "GroupNorm(1,C), affine, eps=1e-5"}[nt],
                         "x (2, 4, 8, 8) NCHW  seed 6", maps, yt, yj))
 
-    # 10-11. ConvLayer plain / downsample ---------------------------------------
+    # -------------------------------------------------------------------------------
+    # ConvLayer plain / downsample
+    # -------------------------------------------------------------------------------
     for i, (down, sh) in enumerate([(False, (2, 4, 8, 8)), (True, (2, 4, 8, 8))], start=10):
         t = TConvLayer(4, 8, 3, downsample=down).double().eval()
         j = ConvLayer(4, 8, 3, downsample=down, rngs=nnx.Rngs(0))
@@ -269,6 +290,10 @@ def parity():
     print("=" * 84)
     return n_pass == len(R)
 
+
+# -------------------------------------------------------------------------------
+# Main Execution
+# -------------------------------------------------------------------------------
 
 def main():
     smoke()
