@@ -92,6 +92,22 @@ def _fmt(s):
     return "(" + ", ".join(str(d) for d in s) + ")"
 
 
+def jf(m, *args, **static_kw):
+    """Run the JAX module under jax.jit — the compiled (inference) path.
+
+    Closes over the module: its arrays (Params AND numpy constants like Blur's FIR
+    kernel) bake in as compile-time constants; only the positional args are traced;
+    keyword args (e.g. use_running_average=True) stay static in the closure.
+
+    Why close-over, not nnx.jit or nnx.split:
+      - nnx.jit is broken on flax 0.10.2 + jax 0.10.0 (passes abstracted_axes).
+      - nnx.split rejects bare-array attributes ("Arrays leaves not supported",
+        e.g. Blur.kernel) — those constants aren't nnx.Param nor static. Making
+        the modules split-able (nnx buffers) is a TRAINING-phase task; for
+        forward/inference parity, baking weights as constants is exactly right."""
+    return jax.jit(lambda *a: m(*a, **static_kw))(*args)
+
+
 def report(idx, title, desc, in_desc, maps, yt, yj):
     """yt, yj: numpy arrays already in the SAME layout."""
     print(f"[{idx}] {title}")
@@ -141,7 +157,7 @@ def parity():
     x = rnd((4, 16), 0)
     with torch.no_grad():
         yt = to_np(t(torch.from_numpy(x)))
-    yj = to_np(j(jnp.asarray(x)))
+    yj = to_np(jf(j, jnp.asarray(x)))
     R.append(report(1, "EqualLinear (plain)", "equalized-LR linear, scale at call",
                     "x (4, 16)  seed 0",
                     [f"weight torch {_fmt(to_np(t.weight).shape)} -> jax {_fmt(j.weight.value.shape)}  [.T]",
@@ -156,7 +172,7 @@ def parity():
     j.bias.value = jnp.asarray(to_np(t.bias))
     with torch.no_grad():
         yt = to_np(t(torch.from_numpy(x)))
-    yj = to_np(j(jnp.asarray(x)))
+    yj = to_np(jf(j, jnp.asarray(x)))
     R.append(report(2, "EqualLinear (fused_lrelu)", "linear + fused leaky-relu",
                     "x (4, 16)  seed 0",
                     ["weight .T, bias (as above)"], yt, yj))
@@ -171,7 +187,7 @@ def parity():
     x = rnd((2, 8, 10, 10), 1)                                # NCHW
     with torch.no_grad():
         yt = to_np(t(torch.from_numpy(x)))                    # (2,16,10,10)
-    yj = to_np(j(jnp.asarray(x.transpose(0, 2, 3, 1)))).transpose(0, 3, 1, 2)
+    yj = to_np(jf(j, jnp.asarray(x.transpose(0, 2, 3, 1)))).transpose(0, 3, 1, 2)
     R.append(report(3, "EqualConv2d", "equalized-LR conv, padding=1",
                     "x (2, 8, 10, 10) NCHW  seed 1",
                     [f"weight torch {_fmt(to_np(t.weight).shape)} -> jax {_fmt(j.weight.value.shape)}  [OIHW->HWIO]",
@@ -188,7 +204,7 @@ def parity():
     x = rnd((2, 8, 8, 8), 2)
     with torch.no_grad():
         yt = to_np(t(torch.from_numpy(x)))
-    yj = to_np(j(jnp.asarray(x.transpose(0, 2, 3, 1)))).transpose(0, 3, 1, 2)
+    yj = to_np(jf(j, jnp.asarray(x.transpose(0, 2, 3, 1)))).transpose(0, 3, 1, 2)
     R.append(report(4, "FusedLeakyReLU", "leaky_relu(x + bias) * sqrt(2)",
                     "x (2, 8, 8, 8) NCHW  seed 2",
                     [f"bias torch (1,8,1,1) -> jax (1,1,1,8)"], yt, yj))
@@ -201,7 +217,7 @@ def parity():
     x = rnd((2, 4, 8, 8), 3)
     with torch.no_grad():
         yt = to_np(t(torch.from_numpy(x)))
-    yj = to_np(j(jnp.asarray(x.transpose(0, 2, 3, 1)))).transpose(0, 3, 1, 2)
+    yj = to_np(jf(j, jnp.asarray(x.transpose(0, 2, 3, 1)))).transpose(0, 3, 1, 2)
     R.append(report(5, "Blur", "FIR blur (upfirdn2d), pad=(1,1)",
                     "x (2, 4, 8, 8) NCHW  seed 3", [], yt, yj))
 
@@ -217,7 +233,7 @@ def parity():
     noise = rnd((2, 1, 8, 8), 5)                              # torch noise broadcasts over C
     with torch.no_grad():
         yt = to_np(t(torch.from_numpy(img), noise=torch.from_numpy(noise)))
-    yj = to_np(j(jnp.asarray(img.transpose(0, 2, 3, 1)),
+    yj = to_np(jf(j, jnp.asarray(img.transpose(0, 2, 3, 1)),
                  noise=jnp.asarray(noise.transpose(0, 2, 3, 1)))).transpose(0, 3, 1, 2)
     R.append(report(6, "NoiseInjection (add)", "image + weight * noise",
                     "img (2,4,8,8) seed 4 | noise (2,1,8,8) seed 5",
@@ -254,7 +270,7 @@ def parity():
         with torch.no_grad():
             yt = to_np(t(torch.from_numpy(x)))
         xj = jnp.asarray(x.transpose(0, 2, 3, 1))
-        yj = to_np(j(xj, use_running_average=True) if nt == "batch" else j(xj)).transpose(0, 3, 1, 2)
+        yj = to_np(jf(j, xj, use_running_average=True) if nt == "batch" else jf(j, xj)).transpose(0, 3, 1, 2)
         R.append(report(i, f"NormLayer ({nt})",
                         {"batch": "BatchNorm2d eval (running stats)",
                          "instance": "InstanceNorm2d, no affine, eps=1e-5",
@@ -277,7 +293,7 @@ def parity():
         x = rnd(sh, 7)
         with torch.no_grad():
             yt = to_np(t(torch.from_numpy(x)))
-        yj = to_np(j(jnp.asarray(x.transpose(0, 2, 3, 1)))).transpose(0, 3, 1, 2)
+        yj = to_np(jf(j, jnp.asarray(x.transpose(0, 2, 3, 1)))).transpose(0, 3, 1, 2)
         R.append(report(i, f"ConvLayer ({'downsample' if down else 'plain'})",
                         "Blur(if down) + EqualConv2d + FusedLeakyReLU",
                         f"x {_fmt(sh)} NCHW  seed 7",

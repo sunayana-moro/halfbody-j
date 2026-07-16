@@ -41,6 +41,14 @@ def _fmt(shape):
     return "(" + ", ".join(str(d) for d in shape) + ")"
 
 
+def jf(m, *args, **static_kw):
+    """Run the JAX module under jax.jit via nnx.split/merge (nnx.jit is broken with
+    flax 0.10.2 + jax 0.10.0). graphdef static, state + args traced, kwargs static."""
+    graphdef, state = nnx.split(m)
+    run = jax.jit(lambda st, *a: nnx.merge(graphdef, st)(*a, **static_kw))
+    return run(state, *args)
+
+
 # -------------------------------------------------------------------------------
 # Weight Porting (Torch -> JAX)
 # -------------------------------------------------------------------------------
@@ -78,7 +86,8 @@ def run_case(idx, title, desc, tmod, jmod, x_nchw, style, styled):
 
     with torch.no_grad():
         yt = to_np(tmod(torch.from_numpy(x_nchw), torch.from_numpy(style)))    # (B, out, oh, ow) NCHW
-    yj_nhwc = to_np(jmod(jnp.asarray(x_nchw.transpose(0, 2, 3, 1)), jnp.asarray(style)))   # (B, oh, ow, out)
+    # JAX side runs under jax.jit — tests the compiled (deploy) path, not eager.
+    yj_nhwc = to_np(jf(jmod, jnp.asarray(x_nchw.transpose(0, 2, 3, 1)), jnp.asarray(style)))
     yj = yj_nhwc.transpose(0, 3, 1, 2)                                          # -> NCHW
 
     print(f"[{idx}] {title}")

@@ -73,6 +73,14 @@ def _fmt(s):
     return "(" + ", ".join(str(d) for d in s) + ")"
 
 
+def jf(m, *args, **static_kw):
+    """Run the JAX module under jax.jit via nnx.split/merge (nnx.jit is broken with
+    flax 0.10.2 + jax 0.10.0). graphdef static, state + args traced, kwargs static."""
+    graphdef, state = nnx.split(m)
+    run = jax.jit(lambda st, *a: nnx.merge(graphdef, st)(*a, **static_kw))
+    return run(state, *args)
+
+
 def perturb_bn(tmod):
     """Randomize every BatchNorm2d's running-stats + affine so BN is exercised."""
     with torch.no_grad():
@@ -168,7 +176,9 @@ def run_block(idx, name, desc, tblock, jblock, port_fn, shape, note, bn, ura):
     with torch.no_grad():
         yt = to_np(tblock(torch.from_numpy(x)))                  # NCHW
     xj = jnp.asarray(x.transpose(0, 2, 3, 1))
-    yj = jblock(xj, use_running_average=True) if ura else jblock(xj)
+    # JAX side under jax.jit (deploy path). use_running_average baked in as a
+    # compile-time constant (must be static under jit), not a traced arg.
+    yj = jf(jblock, xj, use_running_average=True) if ura else jf(jblock, xj)
     yj = to_np(yj).transpose(0, 3, 1, 2)                         # -> NCHW
     return report(idx, name, desc, f"x {_fmt(shape)} NCHW seed 0", note, yt, yj)
 

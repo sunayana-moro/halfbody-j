@@ -22,6 +22,7 @@ def upfirdn2d(x, kernel, up=1, down=1, pad=(0, 0)):
 
     Input (H * W) -> Insert zeros (Upsample) -> Pad / Crop -> Convolve with FIR kernel -> Take every d-th pixel (Downsample) -> Output
     """
+    kernel = jnp.asarray(kernel, dtype=x.dtype)
     B, H, W, C = x.shape
     kh, kw = kernel.shape
 
@@ -136,7 +137,7 @@ class Blur(nnx.Module):
         k = make_kernel(kernel)
         if upsample_factor > 1:
             k = k * (upsample_factor ** 2)
-        self.kernel = k          # numpy constant, NOT nnx.Param --> never trained
+        self.kernel = tuple(map(tuple, k.tolist()))         # numpy constant, NOT nnx.Param --> never trained
         self.pad = pad
 
     def __call__(self, x):

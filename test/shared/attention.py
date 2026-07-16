@@ -91,6 +91,15 @@ def _fmt(s):
     return "(" + ", ".join(str(d) for d in s) + ")"
 
 
+def jf(m, *args, **static_kw):
+    """Run the JAX module under jax.jit via nnx.split/merge (nnx.jit is broken with
+    flax 0.10.2 + jax 0.10.0: it passes abstracted_axes which jax.jit rejects).
+    graphdef static, state + args traced, kwargs baked static."""
+    graphdef, state = nnx.split(m)
+    run = jax.jit(lambda st, *a: nnx.merge(graphdef, st)(*a, **static_kw))
+    return run(state, *args)
+
+
 def report(idx, title, desc, in_desc, maps, yt, yj):
     print(f"[{idx}] {title}")
     print(f"      what      : {desc}")
@@ -141,7 +150,7 @@ def parity():
     q, k, v = rnd((B, N, C), 0), rnd((B, N, C), 1), rnd((B, N, C), 2)
     with torch.no_grad():
         xt, at = t(torch.from_numpy(q), torch.from_numpy(k), torch.from_numpy(v))
-    xj, aj = j(jnp.asarray(q), jnp.asarray(k), jnp.asarray(v))
+    xj, aj = jf(j, jnp.asarray(q), jnp.asarray(k), jnp.asarray(v))   # under jax.jit
     R.append(report(1, "StandardUnifiedAttention (output)",
                     "multi-head attention q,k,v -> projected output",
                     f"q,k,v {_fmt((B, N, C))} seeds 0/1/2", maps, to_np(xt), to_np(xj)))
@@ -160,7 +169,7 @@ def parity():
     x = rnd((2, 8, 8, 4), 3)                                 # (B,H,W,C) — same layout both sides
     with torch.no_grad():
         wt = to_np(t_wp(torch.from_numpy(x), 4))
-    wj = to_np(window_partition(jnp.asarray(x), 4))
+    wj = to_np(jax.jit(lambda a: window_partition(a, 4))(jnp.asarray(x)))   # pure fn under jax.jit
     R.append(report(3, "window_partition", "(B,H,W,C) -> (nW*B, ws*ws, C)",
                     "x (2, 8, 8, 4) seed 3", [], wt, wj))
 
@@ -169,7 +178,7 @@ def parity():
     # -------------------------------------------------------------------------------
     with torch.no_grad():
         rt = to_np(t_wr(torch.from_numpy(wt), 4, 8, 8))
-    rj = to_np(window_reverse(jnp.asarray(wj), 4, 8, 8))
+    rj = to_np(jax.jit(lambda a: window_reverse(a, 4, 8, 8))(jnp.asarray(wj)))   # pure fn under jax.jit
     R.append(report(4, "window_reverse", "inverse of window_partition",
                     "windows (8, 16, 4) from [3]", [], rt, rj))
 
