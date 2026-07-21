@@ -93,19 +93,13 @@ def _fmt(s):
 
 
 def jf(m, *args, **static_kw):
-    """Run the JAX module under jax.jit — the compiled (inference) path.
-
-    Closes over the module: its arrays (Params AND numpy constants like Blur's FIR
-    kernel) bake in as compile-time constants; only the positional args are traced;
-    keyword args (e.g. use_running_average=True) stay static in the closure.
-
-    Why close-over, not nnx.jit or nnx.split:
-      - nnx.jit is broken on flax 0.10.2 + jax 0.10.0 (passes abstracted_axes).
-      - nnx.split rejects bare-array attributes ("Arrays leaves not supported",
-        e.g. Blur.kernel) — those constants aren't nnx.Param nor static. Making
-        the modules split-able (nnx buffers) is a TRAINING-phase task; for
-        forward/inference parity, baking weights as constants is exactly right."""
-    return jax.jit(lambda *a: m(*a, **static_kw))(*args)
+    """Run the JAX module under jax.jit via nnx.split/merge (nnx.jit is broken with
+    flax 0.10.2 + jax 0.10.0: it passes abstracted_axes which jax.jit rejects).
+    graphdef static, state + args traced, kwargs baked static. Works because module
+    constants (e.g. Blur's FIR kernel) are stored as static tuples, not bare arrays."""
+    graphdef, state = nnx.split(m)
+    run = jax.jit(lambda st, *a: nnx.merge(graphdef, st)(*a, **static_kw))
+    return run(state, *args)
 
 
 def report(idx, title, desc, in_desc, maps, yt, yj):
