@@ -100,9 +100,14 @@ def jax_frame_to_np(out):
 
 # ---------------------------------------------------------------- side-by-side video
 def label(img_u8, text):
+    """Draw a centered title banner at the top of a panel."""
     img = img_u8.copy()
-    cv2.rectangle(img, (0, 0), (img.shape[1], 28), (0, 0, 0), -1)
-    cv2.putText(img, text, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+    h, w = img.shape[:2]
+    cv2.rectangle(img, (0, 0), (w, 44), (0, 0, 0), -1)
+    scale, thick = 1.1, 2
+    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+    x = max((w - tw) // 2, 8)                       # centered
+    cv2.putText(img, text, (x, 32), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thick, cv2.LINE_AA)
     return img
 
 
@@ -224,7 +229,7 @@ def main():
         jf = jax_frame_to_np(j_out)
         frame_diffs.append(float(np.abs(tf.astype(np.float64) - jf.astype(np.float64)).max()))
 
-        tf_u8 = label((np.clip(tf, 0, 1) * 255).astype(np.uint8), "PyTorch")
+        tf_u8 = label((np.clip(tf, 0, 1) * 255).astype(np.uint8), "Torch")
         jf_u8 = label((np.clip(jf, 0, 1) * 255).astype(np.uint8), "JAX")
         panel = np.concatenate([tf_u8, jf_u8], axis=1)  # (H, 2W, 3) RGB
         if writer is None:
