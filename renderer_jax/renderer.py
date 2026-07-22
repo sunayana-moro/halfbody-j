@@ -47,13 +47,18 @@ class IMTRenderer(nnx.Module):
         self.config = config
         self.feature_dims = tuple(config.feature_dims)     # (32,64,128,256,512,512)
         self.spatial_dims = tuple(config.spatial_dims)     # (256,128,64,32,16,8)
-
-        self.dense_feature_encoder = IdentityEncoder(output_channels=self.feature_dims, rngs=rngs)
-        self.latent_token_encoder = MotionEncoder(initial_channels=64,
-                                                  output_channels=(128, 256, 512, 512, 512), rngs=rngs)
-        self.latent_token_decoder = MotionDecoder(rngs=rngs)
+        
+        self.dense_feature_encoder = IdentityEncoder(
+            output_channels=self.feature_dims, initial_channels=config.id_enc_init,
+            dm=config.id_dim, rngs=rngs)
+        self.latent_token_encoder = MotionEncoder(
+            initial_channels=config.motion_enc_init,
+            output_channels=tuple(config.motion_enc_channels), dm=config.latent_dim, rngs=rngs)
+        self.latent_token_decoder = MotionDecoder(
+            latent_dim=config.latent_dim, const_dim=config.const_dim, rngs=rngs)
         self.frame_decoder = SynthesisNetwork(config, self.feature_dims, self.spatial_dims, rngs=rngs)
-        self.adapt = IdentidyAdaptive(rngs=rngs)
+        self.adapt = IdentidyAdaptive(
+            dim_mot=config.latent_dim, dim_app=config.id_dim, depth=config.adapt_depth, rngs=rngs)
 
         self.imt = [
             CrossAttention(dim, s_dim, config.num_heads, config.swin_res_threshold, rngs=rngs)
