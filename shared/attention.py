@@ -215,7 +215,9 @@ class SwinUnifiedAttention(nnx.Module):
         table = jax.random.normal(rngs.params(), (n_rel, num_heads)) * 0.02  # ~ torch trunc_normal_(std=.02)
 
         self.rel_bias_table = nnx.Param(table)
-        self.rel_index = _relative_position_index(window_size)   # numpy constant, not a Param
+        # non-trainable buffer (nnx.Variable, NOT Param) so nnx.split/jit works;
+        # bare numpy attributes are rejected by nnx.split ("Arrays leaves not supported")
+        self.rel_index = nnx.Variable(jnp.asarray(_relative_position_index(window_size)))
 
     def __call__(self, query, key, value, mask=None, *, deterministic=True):
         Bn, N, C = query.shape
@@ -227,7 +229,7 @@ class SwinUnifiedAttention(nnx.Module):
         attn = (q * self.scale) @ jnp.swapaxes(k, -1, -2)
 
         # relative position bias -> (heads, N, N)
-        bias = self.rel_bias_table.value[self.rel_index.reshape(-1)]
+        bias = self.rel_bias_table.value[self.rel_index.value.reshape(-1)]
         bias = jnp.transpose(bias.reshape(N, N, self.num_heads), (2, 0, 1))
         attn = attn + bias[None]
 
@@ -302,8 +304,9 @@ class UnifiedSwinBlock(nnx.Module):
         self.fc1 = nnx.Linear(dim, hidden, rngs=rngs)
         self.fc2 = nnx.Linear(hidden, dim, rngs=rngs)
         self.drop = nnx.Dropout(drop, rngs=rngs)
-        self.attn_mask = _build_attn_mask(input_resolution, input_resolution,
-                                          window_size, shift_size)  # numpy const or None
+        _m = _build_attn_mask(input_resolution, input_resolution, window_size, shift_size)
+        # buffer (nnx.Variable) so nnx.split/jit works; None stays static when shift==0
+        self.attn_mask = nnx.Variable(jnp.asarray(_m)) if _m is not None else None
 
     def _mlp(self, x):
         return self.drop(self.fc2(jax.nn.gelu(self.fc1(x))))   # torch swin MLP: Linear,GELU,Linear,Dropout
@@ -323,8 +326,9 @@ class UnifiedSwinBlock(nnx.Module):
             q, k, v = [jnp.roll(t, (-shift, -shift), axis=(1, 2)) for t in (q, k, v)]
 
         # windowed attention
+        mask = self.attn_mask.value if self.attn_mask is not None else None
         aw = self.attn(window_partition(q, ws), window_partition(k, ws),
-                       window_partition(v, ws), mask=self.attn_mask)
+                       window_partition(v, ws), mask=mask)
         x = window_reverse(aw, ws, H, W)           # (B, H, W, C)
 
         if shift > 0:                              # undo the shift
