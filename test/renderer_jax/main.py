@@ -10,7 +10,7 @@ import importlib.util
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SUITES = ("encoders", "decoders")
+SUITES = ("encoders", "decoders", "renderer_smoke")
 
 
 def load(name):
