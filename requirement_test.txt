@@ -1,7 +1,10 @@
 # Env for the torch<->jax tests: block parity (test/shared, test/renderer_jax)
 # AND the full end-to-end renderer test (test/test_renderer.py).
 #
-#   uv venv test_env --python 3.12        # NOT 3.13/3.14 — flax 0.10.2 breaks there
+# Use Python 3.10 (the env the original IMT validated). NOT 3.12+ — face_alignment's
+# numba/llvmlite chain has no wheels there, and flax 0.10.2 breaks on 3.13/3.14.
+#
+#   uv venv test_env --python 3.10
 #   uv pip install --python test_env -r requirement_test.txt
 #   test_env/bin/python test/test_renderer.py --renderer_path checkpoints/renderer.ckpt \
 #       --source_path assets/source_1.png --driving_path assets/driving_1.mp4 --save_path results/ --crop
@@ -23,4 +26,4 @@ timm
 # --- full end-to-end renderer test I/O (test/test_renderer.py + renderer_jax/inference.py) ---
 opencv-python          # cv2: video read/write, color convert, resize
 tqdm                   # progress bar
-face_alignment         # only for --crop (face detect/crop); pulls scikit-image + scipy
+face_alignment==1.4.1  # for --crop; the original IMT pin — resolves cleanly on Python 3.10
