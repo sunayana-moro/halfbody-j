@@ -5,12 +5,13 @@
 #
 #   uv venv test_env --python 3.12
 #   uv pip install --python test_env -r requirement_test.txt
-#   test_env/bin/python test/test_renderer.py --renderer_path checkpoints/renderer.ckpt \
-#       --source_path assets/source_1.png --driving_path assets/driving_1.mp4 --save_path results/
+#
+# This base list installs the CPU jax (portable: works on mac/CPU and on the GPU box).
+# On a GPU box, ALSO run the two optional installs below (CUDA jax + crop).
 
 # --- core: the two frameworks being compared + numpy bridge ---
 torch
-jax==0.10.0
+jax==0.10.0            # CPU build by default; see [GPU] below to swap to the CUDA build
 flax==0.10.2
 numpy
 
@@ -26,8 +27,15 @@ timm
 opencv-python          # cv2: video read/write, color convert, resize
 tqdm                   # progress bar
 
-# --- NO face_alignment (run WITHOUT --crop) ---
-# Hard dependency deadlock: jax 0.10.0 needs Python >=3.11, but face_alignment's
-# numba/llvmlite chain has no wheels for >=3.10 -> cannot coexist on any Python.
-# --crop does NOT affect torch<->jax parity (both sides get identical input), so it
-# is dropped here. (Getting crop working on 3.12 is under investigation separately.)
+# =============================================================================
+# [GPU] — run AFTER the base install to put jax on the GPU (else it falls back to CPU).
+#        Kept out of the base list because the CUDA build has no wheels on mac/CPU.
+#   uv pip install --python test_env "jax[cuda12]==0.10.0"
+#   (also disable TF32 in the test for a clean float32 compare vs torch-on-cuda:
+#    torch.backends.cuda.matmul.allow_tf32 = False; torch.backends.cudnn.allow_tf32 = False)
+#
+# [CROP] — only needed for --crop. Kept separate so a numba/numpy hiccup can't break
+#        the core install. face_alignment pins no numba, so co-pin a modern one
+#        (first cp312 wheels: numba 0.59 / llvmlite 0.42):
+#   uv pip install --python test_env "numba>=0.60" "llvmlite>=0.42" face_alignment
+# =============================================================================
