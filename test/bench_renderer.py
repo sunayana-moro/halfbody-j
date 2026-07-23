@@ -28,6 +28,7 @@ import os
 import sys
 import gc
 import time
+import json
 import argparse
 import statistics
 
@@ -105,8 +106,19 @@ def summarize(ms):
     return med, sum(ms) / 1000.0, 1000.0 / med                 # median_ms, total_s, fps
 
 
+def jax_peak_vram_gb():
+    """Real peak GPU usage (BFC 'peak_bytes_in_use'), NOT jax's ~75% preallocated pool.
+    Returns nan on backends without memory stats (e.g. CPU)."""
+    try:
+        return jax.devices()[0].memory_stats()["peak_bytes_in_use"] / 1e9
+    except Exception:
+        return float("nan")
+
+
 # ---------------------------------------------------------------- torch bench
 def bench_torch(ckpt_path, cfg, frames_np, warmup, device):
+    if device == "cuda":
+        torch.cuda.reset_peak_memory_stats()
     t0 = time.perf_counter()
     tm = build_torch(ckpt_path, cfg, device)
     src_t = torch.from_numpy(frames_np[0].transpose(0, 3, 1, 2)).to(device)   # frame[0] as source
@@ -135,11 +147,12 @@ def bench_torch(ckpt_path, cfg, frames_np, warmup, device):
         outs.append(one(drv))
         per_ms.append((time.perf_counter() - s) * 1000.0)
 
+    peak_gb = torch.cuda.max_memory_allocated() / 1e9 if device == "cuda" else float("nan")
     del tm
     gc.collect()
     if device == "cuda":
         torch.cuda.empty_cache()
-    return t_load, per_ms, outs
+    return t_load, per_ms, outs, peak_gb
 
 
 # ---------------------------------------------------------------- jax bench
@@ -185,7 +198,7 @@ def bench_jax(ckpt_path, cfg, frames_np, warmup):
         s = time.perf_counter()
         outs.append(one(drv))
         per_ms.append((time.perf_counter() - s) * 1000.0)
-    return t_load, per_ms, outs
+    return t_load, per_ms, outs, jax_peak_vram_gb()
 
 
 # ---------------------------------------------------------------- main
@@ -195,6 +208,7 @@ def main():
     p.add_argument("--source_path", required=True)             # CLI symmetry; frame[0] used as source
     p.add_argument("--driving_paths", nargs="+", required=True)
     p.add_argument("--save_path", default="results/")
+    p.add_argument("--run_name", default=None, help="folder name under save_path (default: bench_<timestamp>)")
     p.add_argument("--warmup", type=int, default=2)
     p.add_argument("--max_frames", type=int, default=None)
     p.add_argument("--allow_cpu", action="store_true")
@@ -217,16 +231,16 @@ def main():
     print(f"[INFO] {len(frames)} frames from {len(args.driving_paths)} video(s) @ {fps:.1f} fps\n")
 
     # sequential: torch fully, freed, then jax
-    tl_t, ms_t, out_t = bench_torch(args.renderer_path, cfg, frames, args.warmup, tdev)
-    tl_j, ms_j, out_j = bench_jax(args.renderer_path, cfg, frames, args.warmup)
+    tl_t, ms_t, out_t, vram_t = bench_torch(args.renderer_path, cfg, frames, args.warmup, tdev)
+    tl_j, ms_j, out_j, vram_j = bench_jax(args.renderer_path, cfg, frames, args.warmup)
 
     med_t, tot_t, fps_t = summarize(ms_t)
     med_j, tot_j, fps_j = summarize(ms_j)
 
     print("\n" + "=" * 78)
-    print(f" {'side':10s} {'load(s)':>9s} {'median ms/f':>12s} {'FPS':>8s} {'total(s)':>10s}")
-    print(f" {'Torch':10s} {tl_t:9.2f} {med_t:12.2f} {fps_t:8.2f} {tot_t:10.2f}")
-    print(f" {'JAX(jit)':10s} {tl_j:9.2f} {med_j:12.2f} {fps_j:8.2f} {tot_j:10.2f}")
+    print(f" {'side':10s} {'load(s)':>9s} {'median ms/f':>12s} {'FPS':>8s} {'total(s)':>10s} {'VRAM(GB)':>10s}")
+    print(f" {'Torch':10s} {tl_t:9.2f} {med_t:12.2f} {fps_t:8.2f} {tot_t:10.2f} {vram_t:10.2f}")
+    print(f" {'JAX(jit)':10s} {tl_j:9.2f} {med_j:12.2f} {fps_j:8.2f} {tot_j:10.2f} {vram_j:10.2f}")
     ratio = fps_j / fps_t if fps_t else float("inf")
     print("-" * 78)
     print(f" STEADY-STATE SPEEDUP (JAX FPS / Torch FPS): {ratio:.2f}x  "
@@ -234,9 +248,21 @@ def main():
     print(" (load/compile is one-time; steady FPS is what 'runs persistently' measures)")
     print("=" * 78)
 
-    # side-by-side video with captioned totals
-    os.makedirs(args.save_path, exist_ok=True)
-    out_path = os.path.join(args.save_path, "bench_torch_vs_jax.mp4")
+    # --- persist this run: results/<run_name>/{comparison.mp4, results.json} ---
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join(args.save_path, args.run_name or f"bench_{stamp}")
+    os.makedirs(run_dir, exist_ok=True)
+    out_path = os.path.join(run_dir, "comparison.mp4")
+
+    with open(os.path.join(run_dir, "results.json"), "w") as f:
+        json.dump({
+            "timestamp": stamp,
+            "torch_device": tdev, "jax_device": jdev,
+            "n_frames": len(frames), "video_fps": fps, "warmup": args.warmup,
+            "torch": {"load_s": tl_t, "median_ms": med_t, "fps": fps_t, "total_s": tot_t, "peak_vram_gb": vram_t},
+            "jax":   {"load_s": tl_j, "median_ms": med_j, "fps": fps_j, "total_s": tot_j, "peak_vram_gb": vram_j},
+            "speedup_jax_over_torch": ratio,
+        }, f, indent=2)
     cap_t = f"total {tot_t:.1f}s | {fps_t:.1f} FPS"
     cap_j = f"total {tot_j:.1f}s | {fps_j:.1f} FPS"
     writer = None
@@ -250,7 +276,7 @@ def main():
         writer.write(cv2.cvtColor(panel, cv2.COLOR_RGB2BGR))
     if writer is not None:
         writer.release()
-        print(f" side-by-side video: {out_path}")
+    print(f" saved run -> {run_dir}/  (comparison.mp4 + results.json)")
     return 0
 
 
