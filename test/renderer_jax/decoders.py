@@ -27,6 +27,7 @@ from flax import nnx
 
 from renderer_jax.config import RendererConfig
 from renderer_jax.decoders import MotionDecoder, SynthesisNetwork
+from renderer_jax.encoders import IdentityEncoder
 
 ATOL = 1e-9
 
@@ -53,19 +54,22 @@ def smoke():
     assert m3.shape == (2, 32, 32, 256) and m4.shape == (2, 64, 64, 128)
     print(f"  MotionDecoder: m1 {m1.shape} m2 {m2.shape} m3 {m3.shape} m4 {m4.shape}  OK")
 
-    # SynthesisNetwork smoke: feed a fake aligned pyramid (coarse..fine) at a small
-    # base resolution so the run is cheap. feature/spatial dims halved from the real
-    # config to keep the smoke fast; the code is resolution-agnostic.
+    # SynthesisNetwork smoke: source its input from the REAL producer (IdentityEncoder),
+    # not hand-typed dims -> the 6 feature-pyramid sizes are guaranteed correct and can't
+    # drift from config. (Heavy: full 512 encoder + synthesis incl. Swin -> run on GPU.)
     cfg = RendererConfig()
-    fdims = (32, 64, 128, 256, 512, 512)
-    sdims = (64, 32, 16, 8, 4, 2)                         # base pyramid (fine..coarse)
-    sn = SynthesisNetwork(cfg, fdims, sdims, rngs=rngs)
-    fdr, sdr = fdims[::-1], sdims[::-1]                   # coarse..fine
-    feats = [_randn((2, sdr[i], sdr[i], fdr[i]), 10 + i) for i in range(len(fdr))]
-    out = sn(feats, use_running_average=True)
-    assert out.shape[-1] == 3 and out.shape[0] == 2
-    assert float(out.min()) >= 0.0 and float(out.max()) <= 1.0    # sigmoid range
-    print(f"  SynthesisNetwork: aligned pyramid -> RGB {out.shape}, range [0,1]  OK")
+    ie = IdentityEncoder(output_channels=cfg.feature_dims, initial_channels=cfg.id_enc_init,
+                         dm=cfg.id_dim, rngs=rngs)
+    f_r, i_r = ie(_randn((1, 512, 512, 3), 9), use_running_average=True)   # 6 maps, coarse..fine
+    print("  SynthesisNetwork input (from IdentityEncoder), NHWC:")
+    for k, fm in enumerate(f_r):
+        print(f"      features_align[{k}] : {fm.shape}")
+
+    sn = SynthesisNetwork(cfg, cfg.feature_dims, cfg.spatial_dims, rngs=rngs)
+    out = sn(f_r, use_running_average=True)
+    assert out.shape == (1, 512, 512, 3), out.shape
+    assert float(out.min()) >= 0.0 and float(out.max()) <= 1.0            # sigmoid range
+    print(f"  SynthesisNetwork output frame : {out.shape}, range [0,1]  OK")
     print("  smoke: all OK\n")
 
 
